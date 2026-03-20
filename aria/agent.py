@@ -10,6 +10,7 @@ import anthropic
 
 from aria.config import get_config
 from aria.memory.store import get_store
+from aria.memory.learning import add_memories, search_memories
 from aria.tools import TOOL_DEFINITIONS, dispatch
 
 _SYSTEM_PROMPT = """\
@@ -48,6 +49,13 @@ When you learn something worth remembering, add at the end: REMEMBER: key=value.
 """
 
 
+def _memories_block(memories: list[str]) -> str:
+    if not memories:
+        return ""
+    lines = "\n".join(f"  - {m}" for m in memories)
+    return f"\n\n[What I know about you]\n{lines}"
+
+
 def _facts_block(facts: dict[str, str]) -> str:
     if not facts:
         return ""
@@ -83,7 +91,11 @@ class Agent:
         global_facts = await store.get_global_facts()
         session_facts = await store.get_facts(self.session_id)
         facts = {**global_facts, **session_facts}
-        system = _SYSTEM_PROMPT + _facts_block(facts)
+
+        # Retrieve semantically relevant memories for this message
+        memories = await search_memories(user_message, user_id=self.session_id)
+
+        system = _SYSTEM_PROMPT + _facts_block(facts) + _memories_block(memories)
 
         history.append({"role": "user", "content": user_message})
         await store.add_message(self.session_id, "user", user_message)
@@ -131,6 +143,14 @@ class Agent:
         if full_response:
             await store.add_message(self.session_id, "assistant", full_response)
             await self._extract_facts(full_response, store)
+            # Learn from this exchange asynchronously
+            await add_memories(
+                [
+                    {"role": "user", "content": user_message},
+                    {"role": "assistant", "content": full_response},
+                ],
+                user_id=self.session_id,
+            )
 
     async def _run_turn(
         self, system: str, messages: list[dict]
