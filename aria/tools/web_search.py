@@ -1,4 +1,4 @@
-"""Web search tool — Google Custom Search with DuckDuckGo fallback."""
+"""Web search tool — Tavily (primary) with DuckDuckGo fallback."""
 from __future__ import annotations
 
 import urllib.parse
@@ -35,21 +35,52 @@ async def web_search(query: str, num_results: int = 5) -> str:
     cfg = get_config()
     num_results = max(1, min(10, num_results))
 
+    if cfg.tavily_api_key:
+        try:
+            return await _tavily_search(query, num_results, cfg.tavily_api_key)
+        except Exception as e:
+            log.warning("Tavily search failed (%s), falling back to DuckDuckGo", e)
+
     if cfg.google_api_key and cfg.google_cx:
         try:
             result = await _google_search(query, num_results, cfg.google_api_key, cfg.google_cx)
             if result and "No results" not in result:
                 return result
-            log.warning("Google search returned no results, falling back to DuckDuckGo")
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 429:
-                log.warning("Google search quota exceeded, falling back to DuckDuckGo")
-            else:
-                log.warning("Google search failed (%s), falling back to DuckDuckGo", e)
         except Exception as e:
-            log.warning("Google search error (%s), falling back to DuckDuckGo", e)
+            log.warning("Google search failed (%s), falling back to DuckDuckGo", e)
 
     return await _ddg_search(query, num_results)
+
+
+async def _tavily_search(query: str, n: int, api_key: str) -> str:
+    """Tavily AI search — returns clean summaries designed for LLMs."""
+    payload = {
+        "query": query,
+        "max_results": n,
+        "include_answer": True,
+        "include_raw_content": False,
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.post("https://api.tavily.com/search", json=payload, headers=headers)
+        r.raise_for_status()
+        data = r.json()
+
+    lines = []
+
+    # Tavily provides a direct answer summary — prepend it
+    answer = data.get("answer", "")
+    if answer:
+        lines.append(f"Summary: {answer}\n")
+
+    for item in data.get("results", []):
+        title = item.get("title", "")
+        url = item.get("url", "")
+        content = item.get("content", "").replace("\n", " ")
+        lines.append(f"**{title}**\n{url}\n{content}")
+
+    return "\n\n".join(lines) if lines else "No results found."
 
 
 async def _google_search(query: str, n: int, api_key: str, cx: str) -> str:

@@ -16,9 +16,10 @@ class Config:
     anthropic_api_key: str = field(default_factory=lambda: os.environ.get("ANTHROPIC_API_KEY", ""))
     model: str = field(default_factory=lambda: os.environ.get("ARIA_MODEL", "claude-sonnet-4-6"))
 
-    # Google search (optional)
+    # Search
     google_api_key: str = field(default_factory=lambda: os.environ.get("GOOGLE_API_KEY", ""))
     google_cx: str = field(default_factory=lambda: os.environ.get("GOOGLE_CX", ""))
+    tavily_api_key: str = field(default_factory=lambda: os.environ.get("TAVILY_API_KEY", ""))
 
     # Database
     db_path: Path = field(
