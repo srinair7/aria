@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import urllib.parse
+import logging
 
 import httpx
 
 from aria.config import get_config
+
+log = logging.getLogger(__name__)
 
 WEB_SEARCH_DEF = {
     "name": "web_search",
@@ -33,7 +36,19 @@ async def web_search(query: str, num_results: int = 5) -> str:
     num_results = max(1, min(10, num_results))
 
     if cfg.google_api_key and cfg.google_cx:
-        return await _google_search(query, num_results, cfg.google_api_key, cfg.google_cx)
+        try:
+            result = await _google_search(query, num_results, cfg.google_api_key, cfg.google_cx)
+            if result and "No results" not in result:
+                return result
+            log.warning("Google search returned no results, falling back to DuckDuckGo")
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 429:
+                log.warning("Google search quota exceeded, falling back to DuckDuckGo")
+            else:
+                log.warning("Google search failed (%s), falling back to DuckDuckGo", e)
+        except Exception as e:
+            log.warning("Google search error (%s), falling back to DuckDuckGo", e)
+
     return await _ddg_search(query, num_results)
 
 
@@ -53,48 +68,105 @@ async def _google_search(query: str, n: int, api_key: str, cx: str) -> str:
         title = item.get("title", "")
         link = item.get("link", "")
         snippet = item.get("snippet", "").replace("\n", " ")
-        lines.append(f"**{title}**\n{link}\n{snippet}")
+        # Include rich snippet if available
+        pagemap = item.get("pagemap", {})
+        metatags = pagemap.get("metatags", [{}])[0]
+        description = metatags.get("og:description", "") or metatags.get("description", "")
+        extra = f"\n{description}" if description and description != snippet else ""
+        lines.append(f"**{title}**\n{link}\n{snippet}{extra}")
+
     return "\n\n".join(lines)
 
 
 async def _ddg_search(query: str, n: int) -> str:
-    """DuckDuckGo instant answer (HTML scrape — no API key needed)."""
+    """DuckDuckGo search via the lite HTML endpoint."""
     encoded = urllib.parse.quote_plus(query)
-    url = f"https://html.duckduckgo.com/html/?q={encoded}"
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; ARIA/1.0)"}
+    url = f"https://lite.duckduckgo.com/lite/?q={encoded}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html",
+    }
 
     async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
         r = await client.get(url, headers=headers)
         r.raise_for_status()
         html = r.text
 
-    # Very light extraction — pull result blocks
-    results = _parse_ddg_html(html, n)
+    results = _parse_ddg_lite(html, n)
     if not results:
-        return f"No results found for: {query}"
+        # Last resort: try the regular HTML endpoint
+        return await _ddg_html_search(query, n)
+
     return "\n\n".join(results)
 
 
-def _parse_ddg_html(html: str, n: int) -> list[str]:
-    """Extract result snippets from DuckDuckGo HTML without dependencies."""
+def _decode_ddg_url(url: str) -> str:
+    """Extract real URL from DDG redirect link."""
+    if "uddg=" in url:
+        try:
+            encoded = url.split("uddg=")[1].split("&")[0]
+            return urllib.parse.unquote(encoded)
+        except Exception:
+            pass
+    return url
+
+
+def _parse_ddg_lite(html: str, n: int) -> list[str]:
+    """Parse DuckDuckGo lite results — more stable than full HTML."""
     import re
 
     results: list[str] = []
-    # Each result: <div class="result__body"> ... <a class="result__a" href="...">TITLE</a>
-    # ... <a class="result__snippet">SNIPPET</a>
+    tag_re = re.compile(r"<[^>]+>")
+
+    # DDG lite: results are in <tr> rows with <a class="result-link"> and <td class="result-snippet">
+    link_re = re.compile(r'<a[^>]+class="result-link"[^>]*href="([^"]+)"[^>]*>(.*?)</a>', re.DOTALL)
+    snippet_re = re.compile(r'<td[^>]+class="result-snippet"[^>]*>(.*?)</td>', re.DOTALL)
+
+    links = link_re.findall(html)
+    snippets = snippet_re.findall(html)
+
+    for i, (url, title) in enumerate(links[:n]):
+        snippet = snippets[i] if i < len(snippets) else ""
+        title = tag_re.sub("", title).strip()
+        snippet = tag_re.sub("", snippet).strip().replace("\n", " ")
+        # Decode DDG redirect URLs to get the real URL
+        url = _decode_ddg_url(url)
+        if title and url:
+            results.append(f"**{title}**\n{url}\n{snippet}")
+
+    return results
+
+
+async def _ddg_html_search(query: str, n: int) -> str:
+    """Fallback: DuckDuckGo full HTML endpoint."""
+    import re
+
+    encoded = urllib.parse.quote_plus(query)
+    url = f"https://html.duckduckgo.com/html/?q={encoded}"
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; ARIA/1.0)"}
+
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            r = await client.get(url, headers=headers)
+            r.raise_for_status()
+            html = r.text
+    except Exception:
+        return f"Search unavailable for: {query}"
+
+    tag_re = re.compile(r"<[^>]+>")
     block_re = re.compile(
         r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>.*?'
         r'class="result__snippet[^"]*"[^>]*>(.*?)</(?:a|span)>',
         re.DOTALL,
     )
-    tag_re = re.compile(r"<[^>]+>")
 
+    results = []
     for m in block_re.finditer(html):
         if len(results) >= n:
             break
-        url = tag_re.sub("", m.group(1)).strip()
+        url_r = tag_re.sub("", m.group(1)).strip()
         title = tag_re.sub("", m.group(2)).strip()
         snippet = tag_re.sub("", m.group(3)).strip()
-        results.append(f"**{title}**\n{url}\n{snippet}")
+        results.append(f"**{title}**\n{url_r}\n{snippet}")
 
-    return results
+    return "\n\n".join(results) if results else f"No results found for: {query}"
