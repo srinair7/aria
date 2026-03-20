@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}ARIA{% endblock %}</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --accent: #58a6ff;
+      --accent2: #1f6feb;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --user-bg: #1f6feb22;
+      --aria-bg: #58a6ff11;
+      --error: #f85149;
+      --tool: #d29922;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    header h1 {
+      font-size: 1.2rem;
+      color: var(--accent);
+      letter-spacing: 0.1em;
+    }
+    header .subtitle { font-size: 0.75rem; color: var(--text-muted); }
+    .pulse {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--accent);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+    {% block extra_styles %}{% endblock %}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="pulse"></div>
+    <div>
+      <h1>ARIA</h1>
+      <div class="subtitle">Adaptive Reasoning &amp; Intelligence Assistant</div>
+    </div>
+  </header>
+  {% block content %}{% endblock %}
+  {% block scripts %}{% endblock %}
+</body>
+</html>

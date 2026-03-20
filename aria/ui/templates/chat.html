@@ -1,0 +1,360 @@
+{% extends "base.html" %}
+
+{% block title %}ARIA Chat{% endblock %}
+
+{% block extra_styles %}
+#chat-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  scroll-behavior: smooth;
+}
+.message {
+  max-width: 780px;
+  width: 100%;
+  padding: 14px 18px;
+  border-radius: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.95rem;
+}
+.message.user {
+  background: var(--user-bg);
+  border: 1px solid var(--accent2);
+  align-self: flex-end;
+  color: var(--text);
+}
+.message.aria {
+  background: var(--aria-bg);
+  border: 1px solid var(--border);
+  align-self: flex-start;
+  color: var(--text);
+}
+.message.tool-call {
+  background: transparent;
+  border: none;
+  color: var(--tool);
+  font-size: 0.82rem;
+  font-style: italic;
+  align-self: flex-start;
+  padding: 2px 18px;
+}
+.message.error {
+  background: #f851491a;
+  border: 1px solid var(--error);
+  color: var(--error);
+  align-self: flex-start;
+}
+.message-label {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.typing-cursor::after {
+  content: '▍';
+  animation: blink 0.7s infinite;
+}
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+#input-area {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 16px 24px;
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+}
+#message-input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 10px 14px;
+  font-size: 0.95rem;
+  font-family: inherit;
+  resize: none;
+  min-height: 44px;
+  max-height: 160px;
+  line-height: 1.5;
+  outline: none;
+  transition: border-color 0.2s;
+}
+#message-input:focus { border-color: var(--accent); }
+.btn {
+  background: var(--accent2);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 18px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background 0.2s, opacity 0.2s;
+  white-space: nowrap;
+  height: 44px;
+}
+.btn:hover { background: var(--accent); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn.recording { background: var(--error); animation: pulse 1s infinite; }
+#voice-btn { padding: 10px 14px; font-size: 1.1rem; }
+.transcript-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+{% endblock %}
+
+{% block content %}
+<div id="chat-container">
+  <div class="message aria">
+    <div class="message-label">ARIA</div>
+    Hello! What can I do for you?
+  </div>
+</div>
+
+<div id="input-area">
+  <textarea
+    id="message-input"
+    placeholder="Ask ARIA anything…"
+    rows="1"
+    autofocus
+  ></textarea>
+  <button id="voice-btn" class="btn" title="Voice input">🎤</button>
+  <button id="send-btn" class="btn">Send</button>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const SESSION_ID = "{{ session_id }}";
+const chatContainer = document.getElementById('chat-container');
+const messageInput = document.getElementById('message-input');
+const sendBtn = document.getElementById('send-btn');
+const voiceBtn = document.getElementById('voice-btn');
+
+// Auto-resize textarea
+messageInput.addEventListener('input', () => {
+  messageInput.style.height = 'auto';
+  messageInput.style.height = Math.min(messageInput.scrollHeight, 160) + 'px';
+});
+
+// Send on Enter (Shift+Enter for newline)
+messageInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+
+sendBtn.addEventListener('click', sendMessage);
+
+function scrollToBottom() {
+  chatContainer.scrollTop = chatContainer.scrollHeight;
+}
+
+function addMessage(role, content, extraClass='') {
+  const div = document.createElement('div');
+  div.className = `message ${role} ${extraClass}`.trim();
+  if (role !== 'tool-call' && role !== 'error') {
+    const label = document.createElement('div');
+    label.className = 'message-label';
+    label.textContent = role === 'user' ? 'You' : 'ARIA';
+    div.appendChild(label);
+  }
+  const text = document.createElement('span');
+  text.textContent = content;
+  div.appendChild(text);
+  chatContainer.appendChild(div);
+  scrollToBottom();
+  return text; // return text node for streaming updates
+}
+
+async function sendMessage() {
+  const text = messageInput.value.trim();
+  if (!text) return;
+
+  setLoading(true);
+  messageInput.value = '';
+  messageInput.style.height = 'auto';
+
+  addMessage('user', text);
+
+  const ariaLabel = document.createElement('div');
+  ariaLabel.className = 'message-label';
+  ariaLabel.textContent = 'ARIA';
+  const ariaDiv = document.createElement('div');
+  ariaDiv.className = 'message aria typing-cursor';
+  const ariaText = document.createElement('span');
+  ariaDiv.appendChild(ariaLabel);
+  ariaDiv.appendChild(ariaText);
+  chatContainer.appendChild(ariaDiv);
+  scrollToBottom();
+
+  const formData = new FormData();
+  formData.append('message', text);
+  formData.append('session_id', SESSION_ID);
+
+  try {
+    const resp = await fetch('/chat', { method: 'POST', body: formData });
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+
+    let buffer = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const raw = line.slice(6);
+        if (raw === '[DONE]') continue;
+        try {
+          const data = JSON.parse(raw);
+          if (data.error) {
+            ariaText.textContent = 'Error: ' + data.error;
+            ariaDiv.classList.add('error');
+            ariaDiv.classList.remove('aria', 'typing-cursor');
+          } else if (data.token) {
+            const token = data.token;
+            if (token.startsWith('\n[Calling tool:')) {
+              // render tool call as separate subtle message
+              const toolDiv = document.createElement('div');
+              toolDiv.className = 'message tool-call';
+              toolDiv.textContent = token.trim().replace(/^\n/, '');
+              chatContainer.insertBefore(toolDiv, ariaDiv);
+            } else {
+              ariaText.textContent += token;
+            }
+            scrollToBottom();
+          }
+        } catch(e) {}
+      }
+    }
+  } catch(e) {
+    ariaText.textContent = 'Connection error: ' + e.message;
+    ariaDiv.classList.remove('typing-cursor');
+  }
+
+  ariaDiv.classList.remove('typing-cursor');
+  setLoading(false);
+}
+
+function setLoading(on) {
+  sendBtn.disabled = on;
+  voiceBtn.disabled = on;
+  messageInput.disabled = on;
+  if (!on) messageInput.focus();
+}
+
+// ── Voice ────────────────────────────────────────────────────────────────────
+let mediaRecorder = null;
+let audioChunks = [];
+let isRecording = false;
+
+voiceBtn.addEventListener('click', async () => {
+  if (isRecording) {
+    stopRecording();
+  } else {
+    await startRecording();
+  }
+});
+
+async function startRecording() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioChunks = [];
+    mediaRecorder = new MediaRecorder(stream);
+    mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunks.push(e.data); };
+    mediaRecorder.onstop = sendVoice;
+    mediaRecorder.start();
+    isRecording = true;
+    voiceBtn.classList.add('recording');
+    voiceBtn.title = 'Click to stop recording';
+  } catch(e) {
+    alert('Microphone access denied: ' + e.message);
+  }
+}
+
+function stopRecording() {
+  if (mediaRecorder && isRecording) {
+    mediaRecorder.stop();
+    mediaRecorder.stream.getTracks().forEach(t => t.stop());
+    isRecording = false;
+    voiceBtn.classList.remove('recording');
+    voiceBtn.title = 'Voice input';
+  }
+}
+
+async function sendVoice() {
+  if (!audioChunks.length) return;
+  setLoading(true);
+
+  const blob = new Blob(audioChunks, { type: 'audio/webm' });
+  const formData = new FormData();
+  formData.append('audio', blob, 'recording.webm');
+  formData.append('session_id', SESSION_ID);
+
+  const ariaLabel = document.createElement('div');
+  ariaLabel.className = 'message-label';
+  ariaLabel.textContent = 'ARIA';
+  const ariaDiv = document.createElement('div');
+  ariaDiv.className = 'message aria typing-cursor';
+  const ariaText = document.createElement('span');
+  ariaDiv.appendChild(ariaLabel);
+  ariaDiv.appendChild(ariaText);
+  chatContainer.appendChild(ariaDiv);
+  scrollToBottom();
+
+  try {
+    const resp = await fetch('/voice', { method: 'POST', body: formData });
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let transcriptAdded = false;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const raw = line.slice(6);
+        if (raw === '[DONE]') continue;
+        try {
+          const data = JSON.parse(raw);
+          if (data.transcript && !transcriptAdded) {
+            addMessage('user', data.transcript);
+            transcriptAdded = true;
+          }
+          if (data.token) {
+            ariaText.textContent += data.token;
+            scrollToBottom();
+          }
+          if (data.error) {
+            ariaText.textContent = 'Error: ' + data.error;
+            ariaDiv.classList.add('error');
+            ariaDiv.classList.remove('aria', 'typing-cursor');
+          }
+        } catch(e) {}
+      }
+    }
+  } catch(e) {
+    ariaText.textContent = 'Error: ' + e.message;
+  }
+
+  ariaDiv.classList.remove('typing-cursor');
+  setLoading(false);
+}
+</script>
+{% endblock %}
