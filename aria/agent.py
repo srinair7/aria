@@ -94,7 +94,7 @@ class Agent:
             store.get_history(self.session_id),
             store.get_global_facts(),
             store.get_facts(self.session_id),
-            search_memories(user_message, user_id=self.session_id),
+            search_memories(user_message, user_id="default"),
         )
         facts = {**global_facts, **session_facts}
 
@@ -152,7 +152,7 @@ class Agent:
                     {"role": "user", "content": user_message},
                     {"role": "assistant", "content": full_response},
                 ],
-                user_id=self.session_id,
+                user_id="default",
             ))
 
     async def _run_turn(
