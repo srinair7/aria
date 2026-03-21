@@ -45,6 +45,13 @@ def _get_mem0() -> Any:
 
     cfg = get_config()
 
+    # mem0's AnthropicLLM constructs anthropic.Anthropic(api_key=...) but never passes
+    # base_url even when anthropic_base_url is set in config. Set the env vars that the
+    # Anthropic SDK reads automatically so the proxy is used correctly.
+    os.environ["ANTHROPIC_API_KEY"] = cfg.anthropic_api_key
+    if cfg.http_proxy:
+        os.environ["ANTHROPIC_BASE_URL"] = cfg.http_proxy
+
     config: dict = {
         "embedder": {
             "provider": "huggingface",
