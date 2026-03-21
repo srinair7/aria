@@ -69,9 +69,7 @@ def chat(
     if model:
         cfg.model = model
 
-    session_id = session or str(uuid.uuid4())
-    console.print(_BANNER)
-    console.print(f"[dim]Session: {session_id}[/dim]\n")
+    session_id = session or "default"
 
     asyncio.run(_chat_loop(session_id))
 
@@ -183,9 +181,8 @@ def voice(
         console.print(f"[red]Configuration error:[/red] {exc}")
         raise typer.Exit(1)
 
-    session_id = session or str(uuid.uuid4())
+    session_id = session or "default"
     console.print(_BANNER)
-    console.print(f"[dim]Voice session: {session_id}[/dim]")
     console.print("[dim]Say 'goodbye' to end the session. Press [bold]Space[/bold] to interrupt ARIA while she's speaking.[/dim]\n")
 
     asyncio.run(_voice_loop(session_id))
