@@ -79,8 +79,13 @@ def chat(
 async def _chat_loop(session_id: str) -> None:
     from aria.agent import Agent
     from aria.memory.store import get_store
+    from aria.memory.learning import _get_mem0
 
     agent = Agent(session_id=session_id)
+
+    # Warm up mem0/HuggingFace model in the background so first response isn't slow
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(None, _get_mem0)
 
     try:
         await _chat_loop_inner(agent)

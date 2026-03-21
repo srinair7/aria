@@ -1,6 +1,7 @@
 """ARIA agent loop — Claude tool-use with memory integration."""
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from collections.abc import AsyncIterator
@@ -87,13 +88,15 @@ class Agent:
     async def stream(self, user_message: str) -> AsyncIterator[str]:
         """Streaming agent loop: yields text chunks as they arrive."""
         store = await get_store()
-        history = await store.get_history(self.session_id)
-        global_facts = await store.get_global_facts()
-        session_facts = await store.get_facts(self.session_id)
-        facts = {**global_facts, **session_facts}
 
-        # Retrieve semantically relevant memories for this message
-        memories = await search_memories(user_message, user_id=self.session_id)
+        # Fetch history, facts, and memories concurrently
+        history, global_facts, session_facts, memories = await asyncio.gather(
+            store.get_history(self.session_id),
+            store.get_global_facts(),
+            store.get_facts(self.session_id),
+            search_memories(user_message, user_id=self.session_id),
+        )
+        facts = {**global_facts, **session_facts}
 
         system = _SYSTEM_PROMPT + _facts_block(facts) + _memories_block(memories)
 
@@ -143,14 +146,14 @@ class Agent:
         if full_response:
             await store.add_message(self.session_id, "assistant", full_response)
             await self._extract_facts(full_response, store)
-            # Learn from this exchange asynchronously
-            await add_memories(
+            # Learn from this exchange in the background — don't block next turn
+            asyncio.create_task(add_memories(
                 [
                     {"role": "user", "content": user_message},
                     {"role": "assistant", "content": full_response},
                 ],
                 user_id=self.session_id,
-            )
+            ))
 
     async def _run_turn(
         self, system: str, messages: list[dict]
