@@ -198,16 +198,10 @@ def _fire(message: str) -> None:
     alert = f"Reminder: {message}"
     print(f"\n\n🔔 {alert}\n")
     try:
-        from aria.voice.tts import _speak_kokoro, _get_kokoro
-        # Pre-load Kokoro so it's ready before speaking
-        _get_kokoro()
-        _speak_kokoro(alert, block=False)
+        from aria.voice.tts import speak
+        speak(alert, block=False)
     except Exception:
-        try:
-            from aria.voice.tts import speak
-            speak(alert, block=False)
-        except Exception:
-            pass
+        pass
 
 
 def _scheduler_loop() -> None:

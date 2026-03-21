@@ -54,23 +54,19 @@ def _get_kokoro():
 
 def _speak_kokoro(text: str, block: bool = True) -> None:
     def _run() -> None:
-        try:
-            import sounddevice as sd  # type: ignore
-            import numpy as np
+        import sounddevice as sd  # type: ignore
+        import numpy as np
 
-            kokoro = _get_kokoro()
-            cfg = get_config()
-            # Voice: af_heart is warm/natural female; am_puck is male
-            voice = cfg.say_voice if cfg.say_voice else "af_heart"
-            speed = (cfg.say_rate / 175.0) if cfg.say_rate else 1.0
-            speed = max(0.5, min(2.0, speed))
+        kokoro = _get_kokoro()
+        cfg = get_config()
+        # Voice: af_heart is warm/natural female; am_puck is male
+        voice = cfg.say_voice if cfg.say_voice else "af_heart"
+        speed = (cfg.say_rate / 175.0) if cfg.say_rate else 1.0
+        speed = max(0.5, min(2.0, speed))
 
-            samples, sample_rate = kokoro.create(text, voice=voice, speed=speed, lang="en-us")
-            sd.play(samples, samplerate=sample_rate)
-            sd.wait()
-        except Exception as exc:
-            # Fallback to say — use configured voice if available
-            _speak_say(text, block=True)
+        samples, sample_rate = kokoro.create(text, voice=voice, speed=speed, lang="en-us")
+        sd.play(samples, samplerate=sample_rate)
+        sd.wait()
 
     if block:
         _run()
@@ -80,10 +76,15 @@ def _speak_kokoro(text: str, block: bool = True) -> None:
 
 # ── macOS say ─────────────────────────────────────────────────────────────────
 
+_KOKORO_VOICES = {"af_heart", "af_sky", "af_bella", "af_nicole", "am_puck", "am_adam", "am_echo",
+                  "bf_emma", "bf_isabella", "bm_george", "bm_lewis"}
+
+
 def _speak_say(text: str, block: bool = True) -> None:
     cfg = get_config()
     cmd = ["/usr/bin/say"]
-    if cfg.say_voice:
+    # Only pass voice if it's a real macOS voice (not a Kokoro voice name)
+    if cfg.say_voice and cfg.say_voice not in _KOKORO_VOICES:
         cmd += ["-v", cfg.say_voice]
     if cfg.say_rate:
         cmd += ["-r", str(cfg.say_rate)]
