@@ -69,8 +69,7 @@ def _speak_kokoro(text: str, block: bool = True) -> None:
             sd.play(samples, samplerate=sample_rate)
             sd.wait()
         except Exception as exc:
-            # Fallback to say
-            print(f"[Kokoro TTS error: {exc}] — falling back to say")
+            # Fallback to say — use configured voice if available
             _speak_say(text, block=True)
 
     if block:
